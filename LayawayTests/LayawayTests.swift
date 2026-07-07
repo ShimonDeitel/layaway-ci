@@ -1,67 +1,80 @@
 import XCTest
 @testable import Layaway
 
+@MainActor
 final class LayawayTests: XCTestCase {
-    func testRemainingComputesFromPayments() {
-        var plan = Plan(itemName: "Test", totalPrice: 500, installmentCount: 5, dueDate: Date())
-        plan.payments = [Installment(amount: 100, date: Date())]
-        XCTAssertEqual(plan.remaining, 400, accuracy: 0.001)
-        XCTAssertEqual(plan.progressFraction, 0.2, accuracy: 0.001)
-    }
 
-    func testIsPaidOffWhenFullyPaid() {
-        var plan = Plan(itemName: "Test", totalPrice: 200, installmentCount: 2, dueDate: Date())
-        plan.payments = [Installment(amount: 100, date: Date()), Installment(amount: 100, date: Date())]
+    func testInstallmentRemainingAndPaidAmounts() {
+        var plan = InstallmentPlan(name: "Couch", totalAmount: 1200, installments: [
+            Installment(amount: 300, dueDate: Date(), isPaid: true),
+            Installment(amount: 300, dueDate: Date()),
+            Installment(amount: 300, dueDate: Date()),
+            Installment(amount: 300, dueDate: Date())
+        ])
+        XCTAssertEqual(plan.paidAmount, 300, accuracy: 0.001)
+        XCTAssertEqual(plan.remainingAmount, 900, accuracy: 0.001)
+        XCTAssertEqual(plan.percentPaid, 0.25, accuracy: 0.001)
+        XCTAssertFalse(plan.isPaidOff)
+
+        for i in plan.installments.indices { plan.installments[i].isPaid = true }
         XCTAssertTrue(plan.isPaidOff)
+        XCTAssertEqual(plan.remainingAmount, 0, accuracy: 0.001)
     }
 
-    func testExpectedInstallmentAmount() {
-        let plan = Plan(itemName: "Test", totalPrice: 300, installmentCount: 3, dueDate: Date())
-        XCTAssertEqual(plan.expectedInstallmentAmount, 100, accuracy: 0.001)
+    func testOverdueAndDueSoonDetection() {
+        let cal = Calendar.current
+        let overdue = Installment(amount: 100, dueDate: cal.date(byAdding: .day, value: -1, to: Date())!)
+        let dueSoon = Installment(amount: 100, dueDate: cal.date(byAdding: .day, value: 2, to: Date())!)
+        let farOut = Installment(amount: 100, dueDate: cal.date(byAdding: .day, value: 30, to: Date())!)
+
+        XCTAssertTrue(overdue.isOverdue)
+        XCTAssertFalse(dueSoon.isOverdue)
+        XCTAssertTrue(dueSoon.isDueSoon)
+        XCTAssertFalse(farOut.isDueSoon)
     }
 
-    func testBeadsLitMatchesPaymentCount() {
-        var plan = Plan(itemName: "Test", totalPrice: 400, installmentCount: 4, dueDate: Date())
-        plan.payments = [Installment(amount: 100, date: Date()), Installment(amount: 100, date: Date())]
-        XCTAssertEqual(plan.beadsLit, 2)
+    func testNextDueInstallmentIsEarliestUnpaid() {
+        let cal = Calendar.current
+        var plan = InstallmentPlan(name: "Phone", totalAmount: 800, installments: [
+            Installment(amount: 200, dueDate: cal.date(byAdding: .day, value: 30, to: Date())!),
+            Installment(amount: 200, dueDate: cal.date(byAdding: .day, value: 5, to: Date())!),
+            Installment(amount: 200, dueDate: cal.date(byAdding: .day, value: -1, to: Date())!, isPaid: true)
+        ])
+        plan.sortInstallments()
+        XCTAssertEqual(plan.nextDueInstallment?.amount, 200)
+        XCTAssertEqual(
+            cal.dateComponents([.day], from: Date(), to: plan.nextDueInstallment!.dueDate).day,
+            5
+        )
     }
 
-    func testBeadsLitCapsAtInstallmentCount() {
-        var plan = Plan(itemName: "Test", totalPrice: 200, installmentCount: 2, dueDate: Date())
-        plan.payments = [Installment(amount: 50, date: Date()), Installment(amount: 50, date: Date()), Installment(amount: 100, date: Date())]
-        XCTAssertEqual(plan.beadsLit, 2)
-    }
-
-    @MainActor
-    func testStoreAddPlanRespectsFreeLimit() {
+    func testStoreResetsOnUITestLaunchArgument() {
         let store = LayawayStore()
-        for plan in store.plans { store.deletePlan(plan.id) }
-        XCTAssertTrue(store.addPlan(itemName: "A", totalPrice: 100, installmentCount: 2, dueDate: Date(), isPro: false))
-        XCTAssertTrue(store.addPlan(itemName: "B", totalPrice: 100, installmentCount: 2, dueDate: Date(), isPro: false))
-        XCTAssertFalse(store.addPlan(itemName: "C", totalPrice: 100, installmentCount: 2, dueDate: Date(), isPro: false))
-        XCTAssertTrue(store.addPlan(itemName: "C", totalPrice: 100, installmentCount: 2, dueDate: Date(), isPro: true))
+        XCTAssertFalse(store.plans.isEmpty, "Store should seed default plans after a -uiTestReset wipe")
     }
 
-    @MainActor
-    func testPayNextBeadUsesExpectedAmount() {
+    func testFreeTierActivePlanLimitGatesAdding() {
         let store = LayawayStore()
-        for plan in store.plans { store.deletePlan(plan.id) }
-        store.addPlan(itemName: "A", totalPrice: 400, installmentCount: 4, dueDate: Date(), isPro: false)
-        let planID = store.plans[0].id
-        store.payNextBead(planID: planID)
-        XCTAssertEqual(store.plans[0].payments.count, 1)
-        XCTAssertEqual(store.plans[0].payments[0].amount, 100, accuracy: 0.001)
+        store.deleteAllData()
+        XCTAssertFalse(store.canAddPlan(isPro: false))
+        XCTAssertTrue(store.canAddPlan(isPro: true))
     }
 
-    @MainActor
-    func testDeletePaymentRemovesFromPlan() {
+    func testTogglePaidSetsAndClearsPaidDate() {
         let store = LayawayStore()
-        for plan in store.plans { store.deletePlan(plan.id) }
-        store.addPlan(itemName: "A", totalPrice: 400, installmentCount: 4, dueDate: Date(), isPro: false)
-        let planID = store.plans[0].id
-        store.addPayment(toPlan: planID, amount: 50)
-        let paymentID = store.plans[0].payments[0].id
-        store.deletePayment(paymentID, fromPlan: planID)
-        XCTAssertTrue(store.plans[0].payments.isEmpty)
+        store.deleteAllData()
+        guard let plan = store.plans.first, let installment = plan.installments.first(where: { !$0.isPaid }) else {
+            XCTFail("Expected a seeded plan with an unpaid installment")
+            return
+        }
+        store.togglePaid(planID: plan.id, installmentID: installment.id)
+        let updated = store.plans.first { $0.id == plan.id }!.installments.first { $0.id == installment.id }!
+        XCTAssertTrue(updated.isPaid)
+        XCTAssertNotNil(updated.paidDate)
+
+        store.togglePaid(planID: plan.id, installmentID: installment.id)
+        let reverted = store.plans.first { $0.id == plan.id }!.installments.first { $0.id == installment.id }!
+        XCTAssertFalse(reverted.isPaid)
+        XCTAssertNil(reverted.paidDate)
     }
 }

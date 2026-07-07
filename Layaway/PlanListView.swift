@@ -1,41 +1,49 @@
 import SwiftUI
 
-/// Main screen: each plan renders as a "bead necklace" — one bead per
-/// planned installment, lighting up gold as payments log. The quirky
-/// gimmick is "Pay the Next Bead": a single tap logs exactly the expected
-/// installment amount and animates that bead lighting up, so paying down a
-/// plan feels like a tactile string of beads rather than a spreadsheet row.
 struct PlanListView: View {
     @EnvironmentObject private var store: LayawayStore
     @EnvironmentObject private var purchases: PurchaseManager
-    @State private var sheetMode: LayawaySheetMode?
+    @State private var activeSheet: LayawaySheet?
+    @State private var expandedPlanID: UUID?
+    @State private var showPaywall = false
+    @State private var punchedID: UUID?
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.background.ignoresSafeArea()
+            ScrollView {
+                Color.clear.frame(height: 0).dismissKeyboardOnTap()
 
-                if store.plans.isEmpty {
-                    emptyState
-                } else {
-                    ScrollView {
-                        VStack(spacing: 16) {
-                            ForEach(store.plans) { plan in
+                LazyVStack(spacing: 14) {
+                    if store.activePlans.isEmpty && store.paidOffPlans.isEmpty {
+                        emptyState
+                    } else {
+                        if !store.activePlans.isEmpty {
+                            sectionHeader("Active Plans")
+                            ForEach(store.activePlans) { plan in
                                 planCard(plan)
                             }
                         }
-                        .padding()
+                        if !store.paidOffPlans.isEmpty {
+                            sectionHeader("Paid Off")
+                            ForEach(store.paidOffPlans) { plan in
+                                planCard(plan)
+                            }
+                        }
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
+            .background(LWTheme.backdrop.ignoresSafeArea())
             .navigationTitle("Layaway")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         if store.canAddPlan(isPro: purchases.isPro) {
-                            sheetMode = .addPlan
+                            activeSheet = .addPlan
                         } else {
-                            sheetMode = .paywall
+                            showPaywall = true
                         }
                     } label: {
                         Image(systemName: "plus.circle.fill")
@@ -43,136 +51,154 @@ struct PlanListView: View {
                     .accessibilityIdentifier("addPlanButton")
                 }
             }
-            .dismissKeyboardOnTap()
-            .sheet(item: $sheetMode) { mode in
-                switch mode {
-                case .paywall:
-                    PaywallView().environmentObject(purchases)
-                case .addPlan, .editPlan:
-                    PlanEditSheet(mode: mode) { name, price, count, due in
-                        switch mode {
-                        case .addPlan:
-                            store.addPlan(itemName: name, totalPrice: price, installmentCount: count, dueDate: due, isPro: purchases.isPro)
-                        case .editPlan(let plan):
-                            store.updatePlan(plan.id, itemName: name, totalPrice: price, installmentCount: count, dueDate: due)
-                        default: break
-                        }
-                    }
-                case .addPayment(let planID):
-                    PaymentAddSheet { amount in
-                        store.addPayment(toPlan: planID, amount: amount)
-                    }
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .addPlan:
+                    AddPlanSheet()
+                case .addInstallment(let plan):
+                    AddInstallmentSheet(plan: plan)
+                case .editPlan:
+                    EmptyView()
                 }
+            }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView()
             }
         }
     }
 
-    private func planCard(_ plan: Plan) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(plan.itemName)
-                        .font(.headline)
-                        .foregroundStyle(Theme.ink)
-                    Text(plan.isPaidOff ? "Paid off!" : "\(plan.daysUntilDue) days until due")
-                        .font(.caption)
-                        .foregroundStyle(plan.isPaidOff ? Theme.gold : .secondary)
-                }
-                Spacer()
-                Button {
-                    sheetMode = .editPlan(plan)
-                } label: {
-                    Image(systemName: "pencil.circle")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("editPlan_\(plan.itemName)")
-            }
-
-            necklace(plan)
-
-            HStack {
-                Text("$\(String(format: "%.2f", plan.paidTotal)) of $\(String(format: "%.2f", plan.totalPrice))")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.slate)
-                Spacer()
-                Text("$\(String(format: "%.2f", plan.remaining)) left")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !plan.isPaidOff {
-                HStack(spacing: 12) {
-                    Button {
-                        store.payNextBead(planID: plan.id)
-                    } label: {
-                        Label("Pay Next Bead", systemImage: "circle.fill")
-                            .font(.subheadline.bold())
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Theme.gold)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("payNextBead_\(plan.itemName)")
-
-                    Button {
-                        sheetMode = .addPayment(plan.id)
-                    } label: {
-                        Label("Custom", systemImage: "creditcard")
-                            .font(.subheadline.bold())
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Theme.slate)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("customPayment_\(plan.itemName)")
-                }
-            }
-        }
-        .padding()
-        .background(Theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                store.deletePlan(plan.id)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
-    private func necklace(_ plan: Plan) -> some View {
-        HStack(spacing: 8) {
-            ForEach(0..<max(1, plan.installmentCount), id: \.self) { index in
-                Circle()
-                    .fill(index < plan.beadsLit ? Theme.gold : Theme.beadEmpty)
-                    .frame(width: 22, height: 22)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.6), value: plan.beadsLit)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("necklace_\(plan.itemName)")
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(LWTheme.headlineFont)
+            .foregroundStyle(LWTheme.inkFaded)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
+            .accessibilityIdentifier("sectionHeader_\(text)")
     }
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "creditcard.and.123")
-                .font(.system(size: 48))
-                .foregroundStyle(Theme.slate)
-            Text("No payment plans yet. Add one to start tracking installments.")
-                .foregroundStyle(.secondary)
+            Image(systemName: "ticket.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(LWTheme.copper)
+            Text("No payment plans yet")
+                .font(LWTheme.titleFont)
+                .foregroundStyle(LWTheme.ink)
+            Text("Add a layaway or buy-now-pay-later plan to start tracking installments.")
+                .font(.subheadline)
+                .foregroundStyle(LWTheme.inkFaded)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
         }
+        .padding(.top, 60)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("emptyStateView")
     }
-}
 
-#Preview {
-    PlanListView()
-        .environmentObject(LayawayStore())
-        .environmentObject(PurchaseManager())
+    private func planCard(_ plan: InstallmentPlan) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.name)
+                        .font(LWTheme.titleFont)
+                        .foregroundStyle(LWTheme.ink)
+                    if !plan.merchant.isEmpty {
+                        Text(plan.merchant)
+                            .font(.caption)
+                            .foregroundStyle(LWTheme.inkFaded)
+                    }
+                }
+                Spacer()
+                Text("$\(String(format: "%.2f", plan.remainingAmount)) left")
+                    .font(LWTheme.monoFont)
+                    .foregroundStyle(plan.hasOverdue ? LWTheme.overdue : LWTheme.copper)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("planHeader_\(plan.name)")
+
+            punchCardRow(plan)
+
+            ProgressView(value: plan.percentPaid)
+                .tint(LWTheme.copper)
+
+            HStack {
+                Button {
+                    withAnimation(.spring(response: 0.3)) {
+                        expandedPlanID = expandedPlanID == plan.id ? nil : plan.id
+                    }
+                } label: {
+                    Label(expandedPlanID == plan.id ? "Hide installments" : "Show installments", systemImage: "chevron.down")
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(LWTheme.copperBright)
+
+                Spacer()
+
+                if !plan.isPaidOff {
+                    Button {
+                        activeSheet = .addInstallment(plan)
+                    } label: {
+                        Label("Add installment", systemImage: "plus")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(LWTheme.copperBright)
+                }
+            }
+
+            if expandedPlanID == plan.id {
+                ForEach(plan.installments.sorted(by: { $0.dueDate < $1.dueDate })) { installment in
+                    installmentRow(plan: plan, installment: installment)
+                }
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 16).fill(LWTheme.card))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(LWTheme.rule, lineWidth: 1))
+    }
+
+    private func punchCardRow(_ plan: InstallmentPlan) -> some View {
+        HStack(spacing: 8) {
+            ForEach(plan.installments.sorted(by: { $0.dueDate < $1.dueDate })) { installment in
+                Circle()
+                    .fill(installment.isPaid ? LWTheme.copper : LWTheme.punchHole)
+                    .overlay(Circle().stroke(LWTheme.rule, lineWidth: 1))
+                    .frame(width: 20, height: 20)
+                    .scaleEffect(punchedID == installment.id ? 1.35 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.5), value: punchedID)
+            }
+        }
+        .accessibilityIdentifier("punchCardRow_\(plan.name)")
+    }
+
+    private func installmentRow(plan: InstallmentPlan, installment: Installment) -> some View {
+        HStack {
+            Button {
+                punchedID = installment.id
+                Haptics.punch()
+                store.togglePaid(planID: plan.id, installmentID: installment.id)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if punchedID == installment.id { punchedID = nil }
+                }
+            } label: {
+                Image(systemName: installment.isPaid ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(installment.isPaid ? LWTheme.paidGreen : LWTheme.inkFaded)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("toggleInstallment_\(installment.id)")
+
+            Text(installment.dueDate.formatted(date: .abbreviated, time: .omitted))
+                .font(.caption)
+                .foregroundStyle(installment.isOverdue ? LWTheme.overdue : LWTheme.inkFaded)
+
+            Spacer()
+
+            Text("$\(String(format: "%.2f", installment.amount))")
+                .font(LWTheme.monoFont)
+                .foregroundStyle(LWTheme.ink)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("installmentRow_\(installment.id)")
+    }
 }

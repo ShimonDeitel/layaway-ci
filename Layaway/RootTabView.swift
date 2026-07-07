@@ -4,21 +4,10 @@ struct RootTabView: View {
     var body: some View {
         TabView {
             PlanListView()
-                .tabItem {
-                    Label("Home", systemImage: "creditcard.and.123")
-                }
-
+                .tabItem { Label("Plans", systemImage: "ticket.fill") }
             SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape.fill")
-                }
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
-        .tint(Theme.gold)
+        .tint(LWTheme.copper)
     }
-}
-
-#Preview {
-    RootTabView()
-        .environmentObject(LayawayStore())
-        .environmentObject(PurchaseManager())
 }

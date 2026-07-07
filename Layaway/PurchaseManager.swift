@@ -61,7 +61,9 @@ final class PurchaseManager: ObservableObject {
         var owned = false
         for await result in Transaction.currentEntitlements {
             if case .verified(let transaction) = result, transaction.productID == Self.proProductID {
-                owned = true
+                if transaction.revocationDate == nil {
+                    owned = true
+                }
             }
         }
         isPro = owned
