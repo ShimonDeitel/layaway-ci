@@ -1,0 +1,42 @@
+{
+  "identifier" : "layaway",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_askToBuyEnabled" : false
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21000002",
+      "localizations" : [],
+      "name" : "Layaway Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "0.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "layaway_pro_monthly",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Unlimited payment plans and full history",
+              "displayName" : "Layaway Pro",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "layaway_pro_monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Layaway Pro Monthly",
+          "subscriptionGroupID" : "21000002",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
